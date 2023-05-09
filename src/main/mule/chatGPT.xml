@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+  <http:request-config name="ChatGPT_API_Request_configuration" doc:name="HTTP Request configuration" doc:id="a7897661-3a2d-407d-ab42-1d0284902d76" >
+    <http:request-connection host="api.openai.com" protocol="HTTPS"/>
+    <http:default-headers >
+      <http:default-header key="Authorization" value="Bearer &lt;Your_API_Key&gt;" />
+    </http:default-headers>
+  </http:request-config>
+  <flow name="chatGPT_WhatsApp" doc:id="a43b3c52-c299-4ae3-a5b1-516bbcb8602d" >
+    <set-variable value="#[payload]" doc:name="Initial Payload Variable" doc:id="b011f969-b1b2-4617-a6e7-8e251afbd85a" variableName="initial_payload"/>
+    <choice doc:name="Text &amp; Image Input" doc:id="6c16a4a1-0bf4-459d-bdc5-e8929bac0ed0">
+      <when expression="#[!(lower(payload.entry[0].changes[0].value.messages.text.body[0]) contains ('image'))]">
+        <ee:transform doc:name="ChatGPT Chat API Transform Message" doc:id="df3fc822-81b4-4645-9bee-433664ecdcdf">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "model": "gpt-3.5-turbo",
+    "messages": [
+        {
+            "role": "user",
+            "content": payload.entry[0].changes[0].value.messages.text.body[0]
+        }
+    ]
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+        <until-successful maxRetries="3" doc:name="Until Successful" doc:id="6f23657e-fcd3-42fe-938d-37204bd880ad" millisBetweenRetries="10000">
+      <http:request method="POST" doc:name="ChatGPT Chat API Request" doc:id="09582894-42fc-4b38-8388-356d68abef0d" config-ref="ChatGPT_API_Request_configuration" path="/v1/chat/completions" target="chatgpt_response"/>
+    </until-successful>
+        <ee:transform doc:name="WhatsApp Text Transform Message" doc:id="53a7bc01-bfb9-4011-8a93-1e744ecd3cd8">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+      "messaging_product": "whatsapp",
+      "recipient_type": "individual",
+      "to": vars.initial_payload.entry[0].changes[0].value.messages[0].from,
+      "type": "text",
+      "text": { 
+        "preview_url": true,
+        "body": vars.chatgpt_response.choices[0].message.content
+        }
+    }]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+      </when>
+      <otherwise >
+        <ee:transform doc:name="ChatGPT Image API Transform Message" doc:id="3da1cd74-661a-41bb-bab7-0b1b2830b590" >
+          <ee:message >
+            <ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+  "prompt": payload.entry[0].changes[0].value.messages.text.body[0],
+  "n": 1,
+  "size": "256x256"
+}]]></ee:set-payload>
+          </ee:message>
+        </ee:transform>
+        <until-successful maxRetries="5" doc:name="Until Successful" doc:id="fe6e2dc9-b54f-404e-8134-1800fd80265d">
+          <http:request method="POST" doc:name="ChatGPT ImageURL Connector Request" doc:id="dc529800-7c99-4dd6-97ff-df453cbf2391" config-ref="ChatGPT_API_Request_configuration" path="/v1/images/generations" target="chatgpt_response"/>
+        </until-successful>
+        <ee:transform doc:name="WhatsApp Image Transform Message" doc:id="d938cb05-9fee-402f-be4f-829b03646e58">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  "messaging_product": "whatsapp",
+  "recipient_type": "individual",
+  "to": vars.initial_payload.entry[0].changes[0].value.messages[0].from,
+  "type": "image",
+  "image": {
+    "link" : vars.chatgpt_response.data[0].url
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+      </otherwise>
+    </choice>
+    <http:request method="POST" doc:name="WhatsApp API Send Msg Request" doc:id="dd7ff6dd-df3f-404f-a7c9-9d49db5bfd6d" config-ref="WhatsApp_API_HTTP_Request_configuration" path="/v16.0/&lt;Your_Phone_Number_ID&gt;/messages"/>
+    <logger level="INFO" doc:name="Final Logger" doc:id="5aab7193-a7ac-43ae-abc1-a81c8de617c9" message="#[payload]"/>
+  </flow>
+</mule>

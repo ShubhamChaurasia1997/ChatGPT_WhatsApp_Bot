@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:sc-docgen="http://www.mulesoft.org/schema/mule/sc-docgen" xmlns:tls="http://www.mulesoft.org/schema/mule/tls"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:kafka="http://www.mulesoft.org/schema/mule/kafka" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/kafka http://www.mulesoft.org/schema/mule/kafka/current/mule-kafka.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/tls http://www.mulesoft.org/schema/mule/tls/current/mule-tls.xsd
+http://www.mulesoft.org/schema/mule/sc-docgen http://www.mulesoft.org/schema/mule/sc-docgen/current/mule-sc-docgen.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="181697a5-71a4-42c8-9353-e5078a2916e5" >
+		<http:listener-connection host="0.0.0.0" port="8082" tlsContext="TLS_Context" protocol="HTTPS"/>
+	</http:listener-config>
+	<tls:context name="TLS_Context" doc:name="TLS Context" doc:id="ddbf9c76-e197-454f-b424-199d60730c9c" >
+		<tls:key-store type="jks" path="&lt;YourCACertificateName&gt;.jks" keyPassword="&lt;YourCACertificateKeyPassword&gt;" password="&lt;YourCACertificatePassword&gt;"/>
+	</tls:context>
+	<http:request-config name="WhatsApp_API_HTTP_Request_configuration" doc:name="HTTP Request configuration" doc:id="c1f111a2-4879-4ac3-bcad-bd1ebaa279ce" >
+    <http:request-connection protocol="HTTPS" host="graph.facebook.com" />
+    <http:default-headers >
+      <http:default-header key="Authorization" value="Bearer &lt;Your WhatsApp Access Token&gt;" />
+    </http:default-headers>
+  </http:request-config>
+  <flow name="send-message-flow" doc:id="b924dd64-6d6a-43b1-b2c8-204cb5a543b4" >
+		<http:listener doc:name="Listener" doc:id="f15bb710-67f7-4b89-821c-ec8bcd041140" config-ref="HTTP_Listener_config" path="/"/>
+		<logger level="INFO" doc:name="Logger" doc:id="70f9223e-8da5-4777-bc4f-c8fb24517533" />
+		<ee:transform doc:name="Transform Message" doc:id="2e47735e-5dd5-4e4b-9e93-c615be07bc3a" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+    <http:request method="POST" doc:name="Request" doc:id="cb0ad8d9-3dc4-4176-bffc-74f47e1383ae" config-ref="WhatsApp_API_HTTP_Request_configuration" path="/v16.0/&lt;Your_Phone_Number_ID&gt;/messages"/>
+    <logger level="INFO" doc:name="Logger" doc:id="d0110f76-ec74-40c9-82a2-3668aee02eb2" message="#[payload]"/>
+	</flow>
+	<flow name="receive-message-flow" doc:id="37213bed-c99a-405e-b573-45cc4fd5ae74" >
+		<http:listener doc:name="Listener" doc:id="8f91ae7f-3536-418b-8ff2-cf792ea26767" config-ref="HTTP_Listener_config" allowedMethods="POST" path="/webhook"/>
+		<ee:transform doc:name="Transform Message to JSON" doc:id="f3decdfa-13ad-48cc-b061-5319558f31a7" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+    <logger level="INFO" doc:name="Webhook Query Logger" doc:id="b0893a4d-8db7-4197-b3be-af7b1eff729c" message="#[payload]" />
+    <choice doc:name="User Input &amp; Status Message" doc:id="a446ac5a-f1c5-42cb-8981-65e1e1c9176d" >
+      <when expression="#[payload.entry.changes[0].value.contacts !=null]">
+        <flow-ref doc:name="chatGPT Flow Reference" doc:id="a7c8ec3a-1f05-4947-bbfc-0b2c4dc416a3" name="chatGPT_WhatsApp" />
+      </when>
+      <otherwise >
+        <logger level="INFO" doc:name="End Logger" doc:id="ca86eaac-14bc-4c0f-81ae-2f043225e573" message="end of webhook flow"/>
+      </otherwise>
+    </choice>
+	</flow>
+	<flow name="verify-webhook-flow" doc:id="b8aa6222-aa25-49e0-a2c2-0c483ccfdb17" >
+		<http:listener doc:name="Listener" doc:id="81c9737a-c543-43ac-a0d1-c61b5bf0ea10" config-ref="HTTP_Listener_config" allowedMethods="GET" path="/webhook"/>
+		<ee:transform doc:name="Transform Message" doc:id="3d1dad77-e43e-4d81-a6c5-d0d423b7eb0e" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output text/plain
+var mode = attributes.queryParams."hub.mode"
+var token = attributes.queryParams."hub.verify_token"
+var challenge = attributes.queryParams."hub.challenge"
+var verify_token = "helloTest"
+var statuscode=200
+---
+if ((!(mode=='') and !(token=='')) and
+    ((mode == "subscribe") and (token == verify_token)) )
+      challenge as String
+     else 
+      403
+    
+  
+]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<logger level="INFO" doc:name="Logger" doc:id="220ca067-55ca-4713-9c16-89e8a1946e82" message="#[payload]"/>
+	</flow>
+</mule>
